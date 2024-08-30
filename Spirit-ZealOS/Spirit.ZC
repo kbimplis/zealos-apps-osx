@@ -1,0 +1,219 @@
+#define COMM_PORT_NUM 1
+#define MAX_LINE 200
+
+#define ST_SPIRIT_CMD "SPIRIT_COMMANDS"
+
+#define PROMPT "Spirit"
+
+U0 (*logger)(U8 fmt, ...) = &Print;
+
+U8 CommGetChar(I64 port, I64 abortTicks = 0, Bool abort = NULL)
+{
+  U8 b;
+  I64 spentTicks = 0;
+
+  
+  while (!(FifoU8Remove(comm_ports[port].RX_fifo, &b))) { 
+    Sleep 10;
+    if (abortTicks > 0) {
+      if (++spentTicks >= abortTicks) {
+        *abort = TRUE;
+        return 0xFF;
+      }
+    }
+  }
+
+  return b;
+}
+
+U0 CommReadLine(I64 port, U8 *buf)
+{
+  I64 len, c;
+  
+  for (len = 0; len < MAX_LINE - 1; len++) {
+    c = CommGetChar(port);
+    buf[len] = c;
+    if (c == '\r' ||c == '\n') break;
+  }
+  buf[len] = 0;
+}
+
+U8 *SpiritRecv()
+{
+  U8 *cmd;
+  U16 size;
+
+  size.u8[0] = CommGetChar(COMM_PORT_NUM);
+  size.u8[1] = CommGetChar(COMM_PORT_NUM);
+  
+  cmd = MAlloc(size +1);
+
+  I64 i;
+  for (i = 0; i < size; i++) {
+    cmd[i] = CommGetChar(COMM_PORT_NUM);
+  }
+
+  cmd[size] = 0;
+  return cmd;
+}
+
+U0 SpiritSend(U8 *data, U16 size)
+{
+  CommPutChar(COMM_PORT_NUM, size.u8[0]);
+  CommPutChar(COMM_PORT_NUM, size.u8[1]);
+ 
+  I64 i;
+  for (i = 0; i < size; i++)
+    CommPutChar(COMM_PORT_NUM, data[i]);
+}
+
+U0 SpiritSendStr(U8 *str)
+{
+  SpiritSend(str, StrLen(str));
+}
+
+U8* stdout = NULL;
+
+Bool StubPutKey(I64 ch, I64)
+{
+  U8 *buf = MStrPrint("%s%c", stdout, ch);
+  Free(stdout);
+  stdout = buf;
+
+  return TRUE;
+}
+
+Bool GrabPutS(U8 *str)
+{
+  U8 *buf = MStrPrint("%s%s", stdout, str);
+  Free(stdout);
+  stdout = buf;
+
+  return TRUE;
+}
+
+
+#define CMD_USER_TASK "User"
+#define CMD_EXECUTE   "Exec"
+#define CMD_CLIP_SET  "ClipSet"
+#define CMD_CLIP_GET  "ClipGet"
+
+#define RESP_UNKNOWN_CMD "Unknown command\r\n"
+U8* SpiritDefaultHandler()
+{
+  return MStrPrint(RESP_UNKNOWN_CMD);
+}
+
+U8* SpiritCmdUserTask()
+{
+  U8 *in = SpiritRecv();
+
+  User("%s\n", in);
+
+  Free(in);
+  return NULL;
+}
+
+U8* SpiritCmdExecute()
+{
+  U8 *in = SpiritRecv();
+
+  stdout = MStrPrint("");
+  CKeyDevEntry *kdev = KeyDevAdd(&StubPutKey, &GrabPutS, 0x1000000);
+
+  CCompCtrl *cc=CompCtrlNew(in);
+  Lex(cc);
+
+  try {
+    ExeCmdLine(cc);
+  } catch {
+    Fs->catch_except = TRUE;
+  }
+
+  KeyDevRemove(kdev);
+  CompCtrlDel(cc);
+
+  return stdout;
+}
+
+U8* SpiritCmdClipSet()
+{
+  U8 *in = SpiritRecv();
+
+  CDoc *doc=sys_clip_doc;
+
+  ClipDel;
+  DocPrint(doc, "%s", in);
+  
+  Free(in);
+  return NULL;
+}
+
+U8*SpiritCmdClipGet()
+{
+  I64 len;
+  U8* clip = DocSave(sys_clip_doc, &len);  
+  return clip;
+}
+
+U8* (*handlers)()[4] = {
+  &SpiritCmdUserTask,
+  &SpiritCmdExecute,
+  &SpiritCmdClipSet,
+  &SpiritCmdClipGet
+};
+
+U0 LoadCommands()
+{
+  DefineListLoad(
+ 	ST_SPIRIT_CMD,
+	CMD_USER_TASK "\0"
+        CMD_EXECUTE "\0"
+        CMD_CLIP_SET "\0"
+        CMD_CLIP_GET "\0");
+}
+
+U0 WaitCommand(){
+  U8 *cmd = SpiritRecv();
+
+  logger("Spiritremote cmd: %s\n", cmd);
+  U8* (*handler)();
+  handler = &SpiritDefaultHandler;
+
+  I64 i = DefineMatch(cmd, ST_SPIRIT_CMD, LMF_IGNORE_CASE);
+  if (i >= 0)
+    handler = handlers[i];
+
+  U8* resp = handler();
+  SpiritSendStr(resp);
+
+  Free(resp);
+  Free(cmd);
+}
+
+
+
+
+U0 InitSpirit(){
+  logger("Spirit started on %s%d\n\n", "COM", COMM_PORT_NUM);
+  LoadCommands;
+  CommInit8n1(COMM_PORT_NUM, 115200);
+  
+ // SpiritSendStr(PROMPT);
+  while (TRUE) {
+    WaitCommand;
+  }
+}
+
+U0 StartUpSpirit()
+{
+//  logger = &ZenithLog;
+  logger = &SysLog;
+  "Port is: %d\n", COMM_PORT_NUM; 
+	
+  Spawn(
+   &InitSpirit,
+    ,
+    "Spirit guest agent"
+  );
+}
