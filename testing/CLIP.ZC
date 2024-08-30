@@ -1,0 +1,69 @@
+// Open the COM1 port for communication
+// TempleOS uses 0x3F8 as the base address for COM1
+
+// Function to initialize the COM1 port InitCOM1()
+U0 InitCOM1(){
+    // Set baud rate divisor to 3 (38400 baud rate)
+    OutU8(0x3FB, 0x80); // Enable DLAB (Divisor Latch Access Bit)
+    OutU8(0x3F8, 0x01); // Set divisor to 3 (low byte) 38400 baud
+    OutU8(0x3F9, 0x00); // (high byte)
+    OutU8(0x3FB, 0x03); // 8 bits, no parity, one stop bit
+    OutU8(0x3FC, 0xC7); // Enable FIFO, clear them, with 14-byte threshold
+    OutU8(0x3FD, 0x0B); // IRQs enabled, RTS/DSR set
+}
+
+// Function to send a character to COM1
+U0 SendCharCOM1(U8 c)
+{
+    while ((InU8(0x3FD) & 0x20) == 0) {} // Wait until the buffer is empty
+    OutU8(0x3F8, c);
+}
+
+// Function to receive a character from COM1
+U8 ReceiveCharCOM1()
+{
+    while ((InU8(0x3FD) & 0x01) == 0) {} // Wait until there is data to read
+    return InU8(0x3F8);
+}
+
+// Main program loop
+U0 Main()
+{
+    InitCOM1();
+    
+    Print("COM1 Initialized.\n");
+  
+
+    while(1)
+    {
+        U8 c;
+        
+        // Check if data is available to read
+        if (InU8(0x3FD) & 0x01)
+        {
+            c = ReceiveCharCOM1();
+            "Received: ";
+            //PrintChar(c);
+			"%c",c;
+            "\n";
+        }
+        
+        // Send data back (echo)
+        if (c != 0)
+        {
+            SendCharCOM1(c);
+            "Sent: ";
+            //PrintChar(c);
+			"%c",c;
+            "\n";
+        }
+        
+        c = 0; // Reset character
+    }
+
+}
+
+// Run the main function
+
+Main();
+
