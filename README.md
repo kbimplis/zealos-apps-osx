@@ -54,6 +54,26 @@ using tcp server. For the QEMU KVM add `-serial` options:
 -serial tcp:localhost:4321,server=on,wait=off
 ```
 
+Edit VMWare vmx file settings: 
+```
+serial0.present = "TRUE"
+serial0.fileType = "network"
+serial0.fileName = "telnet://127.0.0.1:7770"
+serial0.yieldOnMsrRead = "TRUE"
+serial0.telnet.port = "7770"
+serial0.startConnected = "TRUE"
+serial0.pipe.endPoint = "server"
+
+nc 127.0.0.1 7770
+telnet 127.0.0.1 7770
+```
+Manually Send a Command (e.g., ?) and check for a response (!):
+
+Inspired by snail.py and Mfa.py of Shrine
+
+
+
+
 And then execute command using host agent
 ```
 ./build/spirit-agent -c tcp:127.0.0.1:4321 exec '"Hello World!\n";'
